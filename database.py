@@ -6,20 +6,6 @@ import uuid
 
 
 def _resolve_db_name():
-    """
-    Decide which SQLite file THIS installation should use.
-
-    Priority:
-      1. RETAIL_SHOP_DB_NAME environment variable (for technical setups)
-      2. A local shop_config.txt file next to this script, first
-         non-comment line = the database filename (no coding needed —
-         a reseller/installer can just drop a text file per shop)
-      3. Falls back to "retail_shop.db"
-
-    This exists so that if two shops are ever accidentally installed in
-    the same folder (or on the same machine), they still get separate
-    database files instead of silently sharing one.
-    """
     env_name = os.environ.get("RETAIL_SHOP_DB_NAME")
     if env_name and env_name.strip():
         return env_name.strip()
@@ -48,11 +34,7 @@ def get_connection():
     return conn
 
 
-# ---------------------------------------------------------------------------
-# Password Hashing (PBKDF2-HMAC-SHA256 with per-user salt, stdlib only)
-# ---------------------------------------------------------------------------
 def hash_password(password, salt=None):
-    """Return (hash_hex, salt_hex). Generates a new salt if none is given."""
     if salt is None:
         salt = binascii.hexlify(os.urandom(16)).decode("utf-8")
     pwd_hash = hashlib.pbkdf2_hmac(
@@ -62,7 +44,6 @@ def hash_password(password, salt=None):
 
 
 def verify_password(password, salt, stored_hash):
-    """Verify against the new salted scheme."""
     if not salt:
         return False
     new_hash, _ = hash_password(password, salt)
@@ -70,7 +51,6 @@ def verify_password(password, salt, stored_hash):
 
 
 def verify_legacy_password(password, stored_hash):
-    """Verify against the OLD unsalted sha256 scheme (for migration only)."""
     return hashlib.sha256(password.encode()).hexdigest() == stored_hash
 
 
@@ -111,7 +91,7 @@ def init_db():
             selling_price REAL,
             gst REAL,
             opening_stock REAL,
-            minimum_stock REAL
+            min_stock_level REAL
         )
     ''')
 
@@ -120,7 +100,9 @@ def init_db():
         CREATE TABLE IF NOT EXISTS suppliers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
-            mobile TEXT,
+            contact_person TEXT,
+            phone TEXT,
+            email TEXT,
             address TEXT,
             gst_number TEXT
         )
@@ -131,7 +113,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS customers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
-            mobile TEXT UNIQUE,
+            phone TEXT,
+            email TEXT,
             address TEXT
         )
     ''')
@@ -145,28 +128,25 @@ def init_db():
             product_id INTEGER,
             quantity REAL,
             purchase_price REAL,
-            discount REAL,
-            gst REAL,
-            transport REAL,
             total_amount REAL,
+            paid_amount REAL,
+            balance_amount REAL,
             FOREIGN KEY(supplier_id) REFERENCES suppliers(id),
             FOREIGN KEY(product_id) REFERENCES products(id)
         )
     ''')
 
-    # Bills Table
+    # Bills Table (Updated with all POS columns)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS bills (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            bill_number TEXT UNIQUE,
-            bill_date TEXT,
             customer_name TEXT,
-            customer_mobile TEXT,
-            payment_mode TEXT,
             subtotal REAL,
-            discount REAL,
-            gst REAL,
-            grand_total REAL
+            tax_percentage REAL,
+            tax_amount REAL,
+            grand_total REAL,
+            payment_mode TEXT,
+            created_at TEXT
         )
     ''')
 
@@ -176,8 +156,9 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             bill_id INTEGER,
             product_id INTEGER,
+            product_name TEXT,
+            price REAL,
             quantity REAL,
-            selling_price REAL,
             total REAL,
             FOREIGN KEY(bill_id) REFERENCES bills(id),
             FOREIGN KEY(product_id) REFERENCES products(id)
@@ -188,10 +169,10 @@ def init_db():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS expenses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            expense_date TEXT,
-            expense_type TEXT,
+            title TEXT,
             amount REAL,
-            remarks TEXT
+            category TEXT,
+            expense_date TEXT
         )
     ''')
 
@@ -210,47 +191,17 @@ def init_db():
 
     conn.commit()
 
-    # -----------------------------------------------------------------
-    # Safe, additive migrations (never drop/rename existing columns)
-    # -----------------------------------------------------------------
+    # Migrations & Additive Columns
     _add_column_if_missing(cursor, "users", "salt", "TEXT")
     _add_column_if_missing(cursor, "products", "is_active", "INTEGER DEFAULT 1")
     _add_column_if_missing(cursor, "suppliers", "is_active", "INTEGER DEFAULT 1")
     _add_column_if_missing(cursor, "customers", "is_active", "INTEGER DEFAULT 1")
     _add_column_if_missing(cursor, "settings", "configured", "INTEGER DEFAULT 0")
     _add_column_if_missing(cursor, "settings", "shop_id", "TEXT")
-    paid_amount_is_new = not _column_exists(cursor, "purchases", "paid_amount")
-    _add_column_if_missing(cursor, "purchases", "paid_amount", "REAL DEFAULT 0")
+    
     conn.commit()
 
-    if paid_amount_is_new:
-        # Purchases recorded before payment-tracking existed: assume they
-        # were already settled the old way (outside this system), so we
-        # don't suddenly show scary "pending balance" for old history.
-        # Anyone can correct an individual entry from the Supplier Ledger.
-        cursor.execute("UPDATE purchases SET paid_amount = total_amount WHERE paid_amount IS NULL OR paid_amount = 0")
-        conn.commit()
-
-    # Backfill for installs that already have real shop data from before
-    # this column existed — don't force the setup wizard on them again.
-    cursor.execute(
-        "UPDATE settings SET configured = 1 "
-        "WHERE (configured IS NULL OR configured = 0) "
-        "AND shop_name IS NOT NULL AND TRIM(shop_name) != '' AND shop_name != 'My Retail Shop'"
-    )
-    cursor.execute("SELECT shop_id FROM settings WHERE id = 1")
-    row = cursor.fetchone()
-    if row and not row["shop_id"]:
-        cursor.execute("UPDATE settings SET shop_id = ? WHERE id = 1", (uuid.uuid4().hex[:12],))
-    conn.commit()
-
-    # Backfill is_active for any pre-existing rows that migrated in as NULL
-    cursor.execute("UPDATE products SET is_active = 1 WHERE is_active IS NULL")
-    cursor.execute("UPDATE suppliers SET is_active = 1 WHERE is_active IS NULL")
-    cursor.execute("UPDATE customers SET is_active = 1 WHERE is_active IS NULL")
-    conn.commit()
-
-    # Default Admin User (new salted scheme)
+    # Default Admin User
     cursor.execute("SELECT * FROM users WHERE username = 'admin'")
     if not cursor.fetchone():
         hashed_password, salt = hash_password("password")
@@ -259,25 +210,19 @@ def init_db():
             ("admin", hashed_password, "Admin", salt),
         )
 
-    # Default Settings — no fake placeholder data anymore. A brand-new
-    # install starts "not configured"; app.py shows a one-time Shop Setup
-    # screen (before login) that collects the real shop details.
+    # Default Settings
     cursor.execute("SELECT * FROM settings WHERE id = 1")
     if not cursor.fetchone():
         cursor.execute(
-            "INSERT INTO settings (shop_name, address, mobile, gst_number, footer_message, terms, configured, shop_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, 0, ?)",
-            ("", "", "", "", "Thank You, Visit Again!", "Goods once sold will not be taken back.",
-             uuid.uuid4().hex[:12]),
+            "INSERT INTO settings (shop_name, address, mobile, gst_number, footer_message, terms, configured) "
+            "VALUES (?, ?, ?, ?, ?, ?, 0)",
+            ("", "", "", "", "Thank You, Visit Again!", "Goods once sold will not be taken back."),
         )
 
     conn.commit()
     conn.close()
 
 
-# ---------------------------------------------------------------------------
-# Shop Setup helpers (used by the first-run wizard in app.py)
-# ---------------------------------------------------------------------------
 def get_settings():
     conn = get_connection()
     try:
