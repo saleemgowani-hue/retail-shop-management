@@ -26,35 +26,14 @@ st.set_page_config(
 # Custom CSS for Multicolour Buttons & Gorgeous Dashboard UI
 st.markdown("""
     <style>
-    /* Sidebar styling */
     section[data-testid="stSidebar"] {
         background-color: #f0f2f6;
     }
-
-    /* Multicolour Sidebar Menu Buttons */
-    div.stButton > button:nth-of-type(1) {background: linear-gradient(135deg, #00c6ff, #0072ff); color: white; border-radius: 8px; font-weight: bold; border: none;}
-    div.stButton > button:nth-of-type(2) {background: linear-gradient(135deg, #7f7fd5, #86a8e7, #91eae4); color: white; border-radius: 8px; font-weight: bold; border: none;}
-    div.stButton > button:nth-of-type(3) {background: linear-gradient(135deg, #f12711, #f5af19); color: white; border-radius: 8px; font-weight: bold; border: none;}
-    div.stButton > button:nth-of-type(4) {background: linear-gradient(135deg, #11998e, #38ef7d); color: white; border-radius: 8px; font-weight: bold; border: none;}
-    div.stButton > button:nth-of-type(5) {background: linear-gradient(135deg, #ff416c, #ff4b2b); color: white; border-radius: 8px; font-weight: bold; border: none;}
-    div.stButton > button:nth-of-type(6) {background: linear-gradient(135deg, #4e54c8, #8f94fb); color: white; border-radius: 8px; font-weight: bold; border: none;}
-    div.stButton > button:nth-of-type(7) {background: linear-gradient(135deg, #203a43, #2c5364); color: white; border-radius: 8px; font-weight: bold; border: none;}
-    div.stButton > button:nth-of-type(8) {background: linear-gradient(135deg, #f7b733, #fc4a1a); color: white; border-radius: 8px; font-weight: bold; border: none;}
-    div.stButton > button:nth-of-type(9) {background: linear-gradient(135deg, #cb356b, #bd3f32); color: white; border-radius: 8px; font-weight: bold; border: none;}
-    div.stButton > button:nth-of-type(10) {background: linear-gradient(135deg, #3a6073, #16222a); color: white; border-radius: 8px; font-weight: bold; border: none;}
-
     div.stButton > button:hover {
         opacity: 0.9;
         transform: scale(1.02);
         transition: all 0.3s ease;
     }
-
-    div[data-testid="stMetric"]:nth-of-type(1) { background: linear-gradient(135deg, #e3f2fd, #bbdefb); border-left: 6px solid #1e88e5; }
-    div[data-testid="stMetric"]:nth-of-type(2) { background: linear-gradient(135deg, #f3e5f5, #e1bee7); border-left: 6px solid #8e24aa; }
-    div[data-testid="stMetric"]:nth-of-type(3) { background: linear-gradient(135deg, #e8f5e9, #c8e6c9); border-left: 6px solid #43a047; }
-    div[data-testid="stMetric"]:nth-of-type(4) { background: linear-gradient(135deg, #fff3e0, #ffe0b2); border-left: 6px solid #fb8c00; }
-    div[data-testid="stMetric"]:nth-of-type(5) { background: linear-gradient(135deg, #ffebee, #ffcdd2); border-left: 6px solid #e53935; }
-
     div[data-testid="stMetric"] {
         padding: 15px;
         border-radius: 12px;
@@ -484,7 +463,249 @@ def render_dashboard(conn):
     col5.metric("💸 Total Expense", f"₹ {total_exp:,.2f}")
 
 # ============================================================================
-# 6. STOCK PURCHASE & PURCHASE HISTORY (with Payment Edit Feature)
+# 2. BILLING SYSTEM (POS)
+# ============================================================================
+def render_pos(conn):
+    st.header("🧾 Billing System (POS)")
+    
+    products = fetch_active_products()
+    customers = fetch_active_customers()
+    
+    if products.empty:
+        st.warning("No active products available. Please add products in Product Master first.")
+        return
+
+    col_pos1, col_pos2 = st.columns([1.3, 1])
+
+    with col_pos1:
+        st.subheader("🛒 Add Items to Cart")
+        prod_dict = {f"{row['name']} (Stock: {row['opening_stock']} | ₹{row['selling_price']})": row for _, row in products.iterrows()}
+        selected_prod_label = st.selectbox("Select Product", list(prod_dict.keys()))
+        selected_prod = prod_dict[selected_prod_label]
+
+        max_stock = int(selected_prod['opening_stock'])
+        qty = st.number_input("Quantity", min_value=1, max_value=max(1, max_stock), value=1, step=1)
+        disc_pct = st.number_input("Discount (%)", min_value=0.0, max_value=100.0, value=0.0, step=1.0)
+
+        if st.button("➕ Add to Cart", use_container_width=True):
+            if max_stock <= 0:
+                st.error("Out of stock!")
+            else:
+                unit_price = selected_prod['selling_price']
+                discount_amt = (unit_price * qty * disc_pct) / 100.0
+                total_price = (unit_price * qty) - discount_amt
+
+                item = {
+                    "id": selected_prod['id'],
+                    "name": selected_prod['name'],
+                    "price": unit_price,
+                    "qty": qty,
+                    "discount_pct": disc_pct,
+                    "total": total_price
+                }
+                st.session_state.cart.append(item)
+                st.success(f"Added {selected_prod['name']} to cart!")
+                st.rerun()
+
+    with col_pos2:
+        st.subheader("🛍️ Current Cart")
+        if not st.session_state.cart:
+            st.info("Cart is empty.")
+        else:
+            cart_df = pd.DataFrame(st.session_state.cart)
+            st.dataframe(cart_df[['name', 'price', 'qty', 'total']], use_container_width=True)
+
+            if st.button("🗑️ Clear Cart", use_container_width=True):
+                st.session_state.cart = []
+                st.rerun()
+
+    if st.session_state.cart:
+        st.markdown("---")
+        st.subheader("💳 Checkout & Payment")
+        
+        cust_names = ["Walk-in Customer"] + list(customers['name']) if not customers.empty else ["Walk-in Customer"]
+        sel_cust = st.selectbox("Select Customer", cust_names)
+        
+        subtotal = sum([item['total'] for item in st.session_state.cart])
+        tax_pct = st.number_input("Tax / GST (%)", min_value=0.0, max_value=28.0, value=0.0, step=0.5)
+        tax_amount = (subtotal * tax_pct) / 100.0
+        grand_total = subtotal + tax_amount
+
+        st.markdown(f"### Subtotal: ₹{subtotal:,.2f} | Tax: ₹{tax_amount:,.2f} | **Grand Total: ₹{grand_total:,.2f}**")
+
+        payment_mode = st.selectbox("Payment Mode", ["Cash", "UPI / QR", "Credit / Card", "Due / Udhar"])
+        
+        if st.button("✅ Complete Bill & Print Receipt", use_container_width=True):
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO bills (customer_name, subtotal, tax_percentage, tax_amount, grand_total, payment_mode, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (sel_cust, subtotal, tax_pct, tax_amount, grand_total, payment_mode, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            bill_id = cursor.lastrowid
+
+            for item in st.session_state.cart:
+                cursor.execute("""
+                    INSERT INTO bill_items (bill_id, product_id, product_name, price, quantity, total)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (bill_id, item['id'], item['name'], item['price'], item['qty'], item['total']))
+
+                cursor.execute("""
+                    UPDATE products SET opening_stock = opening_stock - ? WHERE id = ?
+                """, (item['qty'], item['id']))
+
+            conn.commit()
+            st.success(f"Bill #{bill_id} generated successfully!")
+            st.session_state.cart = []
+            clear_lookup_caches()
+            st.rerun()
+
+# ============================================================================
+# 3. PRODUCT MASTER
+# ============================================================================
+def render_product_master(conn, role):
+    st.header("📦 Product Master Management")
+    
+    tab_list, tab_add = st.tabs(["📋 Product Inventory", "➕ Add New Product"])
+    
+    with tab_list:
+        products_df = pd.read_sql("SELECT * FROM products ORDER BY name", conn)
+        if products_df.empty:
+            st.info("No products found.")
+        else:
+            st.dataframe(products_df, use_container_width=True)
+            
+            st.markdown("### ✏️ Edit or Delete Product")
+            prod_options = {row['name']: row['id'] for _, row in products_df.iterrows()}
+            selected_prod_name = st.selectbox("Select Product to Edit/Delete", list(prod_options.keys()))
+            prod_id = prod_options[selected_prod_name]
+            
+            p_row = products_df[products_df['id'] == prod_id].iloc[0]
+            
+            with st.form("edit_product_form"):
+                new_name = st.text_input("Product Name", value=p_row['name'])
+                new_barcode = st.text_input("Barcode / SKU", value=p_row['barcode'] if p_row['barcode'] else "")
+                new_category = st.text_input("Category", value=p_row['category'] if p_row['category'] else "")
+                new_unit = st.text_input("Unit (pcs, kg, etc.)", value=p_row['unit'] if p_row['unit'] else "pcs")
+                new_pur_price = st.number_input("Purchase Price", value=float(p_row['purchase_price']), min_value=0.0)
+                new_sel_price = st.number_input("Selling Price", value=float(p_row['selling_price']), min_value=0.0)
+                new_stock = st.number_input("Stock", value=float(p_row['opening_stock']), min_value=0.0)
+                new_min_stock = st.number_input("Low Stock Alert Limit", value=float(p_row['min_stock_level']), min_value=0.0)
+                
+                update_sub = st.form_submit_button("💾 Update Product", use_container_width=True)
+                if update_sub:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        UPDATE products SET name = ?, barcode = ?, category = ?, unit = ?, purchase_price = ?, selling_price = ?, opening_stock = ?, min_stock_level = ?
+                        WHERE id = ?
+                    """, (new_name, new_barcode, new_category, new_unit, new_pur_price, new_sel_price, new_stock, new_min_stock, prod_id))
+                    conn.commit()
+                    st.success("Product updated successfully!")
+                    clear_lookup_caches()
+                    st.rerun()
+
+    with tab_add:
+        with st.form("add_product_form"):
+            name = st.text_input("Product Name *")
+            barcode = st.text_input("Barcode / SKU")
+            category = st.text_input("Category")
+            unit = st.text_input("Unit (pcs, kg, packet)", value="pcs")
+            purchase_price = st.number_input("Purchase Price", min_value=0.0, step=1.0)
+            selling_price = st.number_input("Selling Price", min_value=0.0, step=1.0)
+            opening_stock = st.number_input("Opening Stock", min_value=0.0, step=1.0)
+            min_stock_level = st.number_input("Low Stock Warning Limit", min_value=0.0, value=5.0, step=1.0)
+            
+            submitted = st.form_submit_button("➕ Save Product", use_container_width=True)
+            if submitted:
+                if not name.strip():
+                    st.warning("Product Name is required.")
+                else:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        INSERT INTO products (name, barcode, category, unit, purchase_price, selling_price, opening_stock, min_stock_level, is_active)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+                    """, (name.strip(), barcode, category, unit, purchase_price, selling_price, opening_stock, min_stock_level))
+                    conn.commit()
+                    st.success("Product added successfully!")
+                    clear_lookup_caches()
+                    st.rerun()
+
+# ============================================================================
+# 4. SUPPLIER MANAGEMENT
+# ============================================================================
+def render_supplier_management(conn):
+    st.header("🏭 Supplier Management")
+    
+    tab_list, tab_add = st.tabs(["📋 Supplier List", "➕ Add Supplier"])
+    
+    with tab_list:
+        suppliers_df = pd.read_sql("SELECT * FROM suppliers ORDER BY name", conn)
+        if suppliers_df.empty:
+            st.info("No suppliers found.")
+        else:
+            st.dataframe(suppliers_df, use_container_width=True)
+            
+    with tab_add:
+        with st.form("add_supplier_form"):
+            name = st.text_input("Supplier Name *")
+            contact_person = st.text_input("Contact Person")
+            phone = st.text_input("Phone Number")
+            email = st.text_input("Email")
+            address = st.text_area("Address")
+            
+            submitted = st.form_submit_button("💾 Save Supplier", use_container_width=True)
+            if submitted:
+                if not name.strip():
+                    st.warning("Supplier Name is required.")
+                else:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        INSERT INTO suppliers (name, contact_person, phone, email, address, is_active)
+                        VALUES (?, ?, ?, ?, ?, 1)
+                    """, (name.strip(), contact_person, phone, email, address))
+                    conn.commit()
+                    st.success("Supplier added successfully!")
+                    clear_lookup_caches()
+                    st.rerun()
+
+# ============================================================================
+# 5. CUSTOMER MANAGEMENT
+# ============================================================================
+def render_customer_management(conn):
+    st.header("👥 Customer Management")
+    
+    tab_list, tab_add = st.tabs(["📋 Customer Directory", "➕ Add Customer"])
+    
+    with tab_list:
+        cust_df = pd.read_sql("SELECT * FROM customers ORDER BY name", conn)
+        if cust_df.empty:
+            st.info("No customers found.")
+        else:
+            st.dataframe(cust_df, use_container_width=True)
+            
+    with tab_add:
+        with st.form("add_customer_form"):
+            name = st.text_input("Customer Name *")
+            phone = st.text_input("Phone Number *")
+            email = st.text_input("Email")
+            address = st.text_area("Address")
+            
+            submitted = st.form_submit_button("💾 Save Customer", use_container_width=True)
+            if submitted:
+                if not name.strip() or not phone.strip():
+                    st.warning("Name and Phone Number are required.")
+                else:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        INSERT INTO customers (name, phone, email, address, is_active)
+                        VALUES (?, ?, ?, ?, 1)
+                    """, (name.strip(), phone.strip(), email, address))
+                    conn.commit()
+                    st.success("Customer added successfully!")
+                    clear_lookup_caches()
+                    st.rerun()
+
+# ============================================================================
+# 6. STOCK PURCHASE & PURCHASE HISTORY
 # ============================================================================
 def render_stock_purchase(conn):
     st.header("📥 Stock Purchase Management")
@@ -580,15 +801,113 @@ def render_stock_purchase(conn):
                 st.success(f"Payment updated successfully! New Paid: ₹{new_paid:,.2f}, Remaining Balance: ₹{new_balance:,.2f}")
                 st.rerun()
 
-# Placeholders for other required modules
-def render_pos(conn): st.info("POS Module is loaded.")
-def render_product_master(conn, role): st.info("Product Master Module is loaded.")
-def render_supplier_management(conn): st.info("Supplier Management Module is loaded.")
-def render_customer_management(conn): st.info("Customer Management Module is loaded.")
-def render_expense_management(conn): st.info("Expense Management Module is loaded.")
-def render_reports_hub(conn): st.info("Reports Hub Module is loaded.")
-def render_low_stock_alerts(conn): st.info("Low Stock Alerts Module is loaded.")
-def render_settings(conn, role): st.info("Settings Module is loaded.")
+# ============================================================================
+# 7. EXPENSE MANAGEMENT
+# ============================================================================
+def render_expense_management(conn):
+    st.header("💸 Expense Management")
+    
+    tab_list, tab_add = st.tabs(["📋 Expense History", "➕ Add Expense"])
+    
+    with tab_list:
+        exp_df = pd.read_sql("SELECT * FROM expenses ORDER BY expense_date DESC", conn)
+        if exp_df.empty:
+            st.info("No expenses recorded.")
+        else:
+            st.dataframe(exp_df, use_container_width=True)
+            
+    with tab_add:
+        with st.form("add_expense_form"):
+            title = st.text_input("Expense Title / Description *")
+            amount = st.number_input("Amount (₹)", min_value=0.0, step=10.0)
+            category = st.selectbox("Category", ["Rent", "Electricity", "Salary", "Transport", "Maintenance", "Tea/Refreshment", "Others"])
+            exp_date = st.date_input("Expense Date", value=date.today())
+            
+            submitted = st.form_submit_button("💾 Save Expense", use_container_width=True)
+            if submitted:
+                if not title.strip() or amount <= 0:
+                    st.warning("Please provide a valid title and amount.")
+                else:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        INSERT INTO expenses (title, amount, category, expense_date)
+                        VALUES (?, ?, ?, ?)
+                    """, (title.strip(), amount, category, str(exp_date)))
+                    conn.commit()
+                    st.success("Expense recorded successfully!")
+                    st.rerun()
+
+# ============================================================================
+# 8. COMPLETE REPORTS HUB
+# ============================================================================
+def render_reports_hub(conn):
+    st.header("📈 Complete Reports Hub")
+    
+    tab_sales, tab_stock, tab_exp = st.tabs(["💰 Sales Report", "📦 Stock Report", "💸 Expense Report"])
+    
+    with tab_sales:
+        st.subheader("Sales History")
+        bills_df = pd.read_sql("SELECT * FROM bills ORDER BY created_at DESC", conn)
+        if bills_df.empty:
+            st.info("No sales records found.")
+        else:
+            st.dataframe(bills_df, use_container_width=True)
+            
+    with tab_stock:
+        st.subheader("Current Stock Valuation")
+        stock_df = pd.read_sql("SELECT id, name, category, opening_stock, purchase_price, selling_price FROM products WHERE is_active = 1", conn)
+        if stock_df.empty:
+            st.info("No products found.")
+        else:
+            stock_df['Total Valuation'] = stock_df['opening_stock'] * stock_df['purchase_price']
+            st.dataframe(stock_df, use_container_width=True)
+            st.metric("Total Inventory Valuation (Purchase Price)", f"₹ {stock_df['Total Valuation'].sum():,.2f}")
+            
+    with tab_exp:
+        st.subheader("Expense Breakdown")
+        exp_df = pd.read_sql("SELECT * FROM expenses ORDER BY expense_date DESC", conn)
+        if exp_df.empty:
+            st.info("No expense records found.")
+        else:
+            st.dataframe(exp_df, use_container_width=True)
+            st.metric("Total Expenses", f"₹ {exp_df['amount'].sum():,.2f}")
+
+# ============================================================================
+# 9. LOW STOCK ALERTS
+# ============================================================================
+def render_low_stock_alerts(conn):
+    st.header("⚠️ Low Stock Alerts")
+    
+    query = "SELECT * FROM products WHERE is_active = 1 AND opening_stock <= min_stock_level ORDER BY opening_stock ASC"
+    low_stock_df = pd.read_sql(query, conn)
+    
+    if low_stock_df.empty:
+        st.success("🎉 All products have sufficient stock levels!")
+    else:
+        st.warning("The following items are running low on stock and need reordering:")
+        st.dataframe(low_stock_df[['name', 'category', 'opening_stock', 'min_stock_level', 'unit']], use_container_width=True)
+
+# ============================================================================
+# 10. SETTINGS
+# ============================================================================
+def render_settings(conn, role):
+    st.header("⚙️ Shop Settings")
+    
+    settings = get_settings()
+    
+    with st.form("settings_form"):
+        shop_name = st.text_input("Shop Name", value=(settings['shop_name'] if settings else ""))
+        address = st.text_area("Address", value=(settings['address'] if settings else ""))
+        mobile = st.text_input("Mobile", value=(settings['mobile'] if settings else ""))
+        gst_number = st.text_input("GST Number", value=(settings['gst_number'] if settings else ""))
+        footer_message = st.text_input("Receipt Footer Message", value=(settings['footer_message'] if settings else ""))
+        terms = st.text_area("Terms & Conditions", value=(settings['terms'] if settings else ""))
+        
+        submitted = st.form_submit_button("💾 Save Settings", use_container_width=True)
+        if submitted:
+            save_shop_setup(shop_name, address, mobile, gst_number, footer_message, terms)
+            st.success("Settings updated successfully!")
+            st.rerun()
 
 # ============================================================================
 # Entry Point Control Flow
