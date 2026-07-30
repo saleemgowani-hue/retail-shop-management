@@ -73,31 +73,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.markdown("""
-    <style>
-    .st-key-dash_nav_tiles div[data-testid="stHorizontalBlock"] {
-        gap: 14px;
-    }
-    .st-key-dash_nav_tiles div.stButton > button {
-        min-height: 92px;
-        width: 100%;
-        border-radius: 16px;
-        border: none;
-        color: white;
-        font-weight: 700;
-        font-size: 14px;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.18);
-        transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
-        white-space: normal;
-    }
-    .st-key-dash_nav_tiles div.stButton > button:hover {
-        transform: translateY(-4px) scale(1.02);
-        box-shadow: 0 9px 18px rgba(0,0,0,0.26);
-        opacity: 0.95;
-    }
-    </style>
-""", unsafe_allow_html=True)
-
 # Initialize Database
 init_db()
 
@@ -247,6 +222,78 @@ def change_password(username, old_pass, new_pass):
         conn.close()
 
 # ============================================================================
+# Shop Setup & Login Screens
+# ============================================================================
+def shop_setup_screen():
+    st.markdown("<h1 style='text-align: center; color: #2b2d42;'>🛒 Welcome — Let's Set Up Your Shop</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: gray;'>This runs only once for this installation.</p>", unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    settings_row = get_settings()
+
+    col1, col2, col3 = st.columns([1, 1.4, 1])
+    with col2:
+        with st.form("shop_setup_form"):
+            shop_name = st.text_input("Shop Name *", value=(settings_row['shop_name'] if settings_row else ""))
+            address = st.text_area("Address", value=(settings_row['address'] if settings_row else ""))
+            mobile = st.text_input("Mobile", value=(settings_row['mobile'] if settings_row else ""))
+            gst_number = st.text_input("GST Number (optional)", value=(settings_row['gst_number'] if settings_row else ""))
+            footer_message = st.text_input("Receipt Footer Message", value=(settings_row['footer_message'] if settings_row else "Thank You, Visit Again!"))
+            terms = st.text_area("Terms & Conditions", value=(settings_row['terms'] if settings_row else "Goods once sold will not be taken back."))
+            submitted = st.form_submit_button("✅ Save & Continue", use_container_width=True)
+
+            if submitted:
+                if not shop_name.strip():
+                    st.warning("Shop Name is required.")
+                else:
+                    save_shop_setup(shop_name.strip(), address, mobile, gst_number, footer_message, terms)
+                    st.success("Shop set up successfully! Redirecting...")
+                    st.rerun()
+
+def login_screen():
+    st.markdown("<h1 style='text-align: center; color: #2b2d42;'>🛒 Retail Shop Management Software</h1>", unsafe_allow_html=True)
+    st.markdown("<h4 style='text-align: center; color: gray;'>Welcome! Please Login or Register to continue</h4>", unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns([1, 1.2, 1])
+    with col2:
+        tab_login, tab_signup = st.tabs(["🔑 Login", "📝 Sign Up / Register"])
+
+        with tab_login:
+            with st.form("login_form"):
+                username = st.text_input("Username")
+                password = st.text_input("Password", type="password")
+                submit = st.form_submit_button("Login to System", use_container_width=True)
+
+                if submit:
+                    user = check_login(username, password)
+                    if user:
+                        st.session_state.logged_in = True
+                        st.session_state.username = user["username"]
+                        st.session_state.role = user["role"]
+                        st.success("Login Successful!")
+                        st.rerun()
+                    else:
+                        st.error("Invalid Username or Password")
+
+        with tab_signup:
+            with st.form("signup_form"):
+                new_user = st.text_input("Choose Username")
+                new_pass = st.text_input("Choose Password", type="password")
+                role_choice = st.selectbox("Select Role", ROLES)
+                reg_submit = st.form_submit_button("Register New User", use_container_width=True)
+
+                if reg_submit:
+                    if new_user and new_pass:
+                        success, msg = register_user(new_user, new_pass, role_choice)
+                        if success:
+                            st.success(msg)
+                        else:
+                            st.error(msg)
+                    else:
+                        st.warning("Please fill all fields.")
+
+# ============================================================================
 # Cached Lookups & Helpers
 # ============================================================================
 @st.cache_data(ttl=5)
@@ -279,16 +326,8 @@ def clear_lookup_caches():
     fetch_active_customers.clear()
 
 def get_live_stock(conn, product_id):
-    row = conn.execute(
-        "SELECT opening_stock FROM products WHERE id = ?", (product_id,)
-    ).fetchone()
+    row = conn.execute("SELECT opening_stock FROM products WHERE id = ?", (product_id,)).fetchone()
     return row["opening_stock"] if row else 0
-
-def df_to_excel_bytes(df, sheet_name="Sheet1"):
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name=sheet_name)
-    return buffer.getvalue()
 
 # ============================================================================
 # Main Application Logic
@@ -380,28 +419,6 @@ def render_dashboard(conn):
     st.markdown("<h2 style='color: #2b2d42;'>📊 Executive Shop Dashboard</h2>", unsafe_allow_html=True)
     st.markdown("Here is a quick overview of your retail store performance today.")
 
-    st.markdown("#### 🚀 Quick Navigation")
-    tile_pages = [p for p in MENU_ICONS.keys() if p != "Dashboard" and page_allowed(p, role)]
-    cols_per_row = 3
-    css_rules = []
-    with st.container(key="dash_nav_tiles"):
-        for r in range(0, len(tile_pages), cols_per_row):
-            row_pages = tile_pages[r:r + cols_per_row]
-            row_key = f"dash_nav_row_{r // cols_per_row}"
-            with st.container(key=row_key):
-                cols = st.columns(len(row_pages))
-                for idx, (col, page_name) in enumerate(zip(cols, row_pages), start=1):
-                    icon, color1, color2 = PAGE_STYLES.get(page_name, ("🔗", "#667eea", "#764ba2"))
-                    css_rules.append(
-                        f'.st-key-{row_key} div[data-testid="stHorizontalBlock"] > div:nth-child({idx}) '
-                        f'div.stButton button {{background: linear-gradient(135deg, {color1}, {color2});}}'
-                    )
-                    with col:
-                        if st.button(f"{icon}  {page_name}", key=f"navtile_{page_name}", use_container_width=True):
-                            st.session_state.current_page = page_name
-                            st.rerun()
-        st.markdown(f"<style>{''.join(css_rules)}</style>", unsafe_allow_html=True)
-
     p_count = pd.read_sql("SELECT COUNT(*) as cnt FROM products WHERE is_active = 1", conn).iloc[0]['cnt']
     c_count = pd.read_sql("SELECT COUNT(*) as cnt FROM customers WHERE is_active = 1", conn).iloc[0]['cnt']
     s_count = pd.read_sql("SELECT COUNT(*) as cnt FROM suppliers WHERE is_active = 1", conn).iloc[0]['cnt']
@@ -420,7 +437,7 @@ def render_dashboard(conn):
     col5.metric("💸 Total Expense", f"₹ {total_exp:,.2f}")
 
 # ============================================================================
-# 6. STOCK PURCHASE & PURCHASE HISTORY (Updated with Edit/Balance Feature)
+# 6. STOCK PURCHASE & PURCHASE HISTORY
 # ============================================================================
 def render_stock_purchase(conn):
     st.header("📥 Stock Purchase Management")
@@ -516,33 +533,18 @@ def render_stock_purchase(conn):
                 st.success(f"Payment updated successfully! New Paid: ₹{new_paid:,.2f}, Remaining Balance: ₹{new_balance:,.2f}")
                 st.rerun()
 
-# Placeholders for other required functions to make the script whole
-def render_pos(conn):
-    st.info("POS Module is loaded.")
-
-def render_product_master(conn, role):
-    st.info("Product Master Module is loaded.")
-
-def render_supplier_management(conn):
-    st.info("Supplier Management Module is loaded.")
-
-def render_customer_management(conn):
-    st.info("Customer Management Module is loaded.")
-
-def render_expense_management(conn):
-    st.info("Expense Management Module is loaded.")
-
-def render_reports_hub(conn):
-    st.info("Reports Hub Module is loaded.")
-
-def render_low_stock_alerts(conn):
-    st.info("Low Stock Alerts Module is loaded.")
-
-def render_settings(conn, role):
-    st.info("Settings Module is loaded.")
+# Placeholders for other required modules
+def render_pos(conn): st.info("POS Module is loaded.")
+def render_product_master(conn, role): st.info("Product Master Module is loaded.")
+def render_supplier_management(conn): st.info("Supplier Management Module is loaded.")
+def render_customer_management(conn): st.info("Customer Management Module is loaded.")
+def render_expense_management(conn): st.info("Expense Management Module is loaded.")
+def render_reports_hub(conn): st.info("Reports Hub Module is loaded.")
+def render_low_stock_alerts(conn): st.info("Low Stock Alerts Module is loaded.")
+def render_settings(conn, role): st.info("Settings Module is loaded.")
 
 # ============================================================================
-# Entry Point
+# Entry Point Control Flow
 # ============================================================================
 if not is_shop_configured():
     shop_setup_screen()
