@@ -20,16 +20,30 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS for Dashboard Navigation Tiles & Sidebar UI
+# Custom CSS for Sidebar, Dashboard Tiles & Buttons UI
 st.markdown("""
     <style>
     section[data-testid="stSidebar"] {
         background-color: #f0f2f6;
     }
-    div.stButton > button:hover {
-        opacity: 0.9;
-        transform: scale(1.02);
-        transition: all 0.3s ease;
+    section[data-testid="stSidebar"] div.stButton > button {
+        background-color: #ffffff;
+        color: #1f2937;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        font-weight: 600;
+        text-align: left;
+        width: 100%;
+        padding: 8px 12px;
+        margin-bottom: 4px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        transition: all 0.2s ease;
+    }
+    section[data-testid="stSidebar"] div.stButton > button:hover {
+        background-color: #e5e7eb;
+        border-color: #9ca3af;
+        color: #111827;
+        transform: scale(1.01);
     }
     div[data-testid="stMetric"] {
         padding: 15px;
@@ -163,36 +177,6 @@ def register_user(username, password, role):
         )
         conn.commit()
         return True, "User registered successfully!"
-    finally:
-        conn.close()
-
-def change_password(username, old_pass, new_pass):
-    if len(new_pass) < 4:
-        return False, "New password must be at least 4 characters."
-
-    conn = get_connection()
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
-        user = cursor.fetchone()
-        if not user:
-            return False, "User not found!"
-
-        if user["salt"]:
-            valid = verify_password(old_pass, user["salt"], user["password"])
-        else:
-            valid = verify_legacy_password(old_pass, user["password"])
-
-        if not valid:
-            return False, "Current password is incorrect!"
-
-        new_hash, new_salt = hash_password(new_pass)
-        cursor.execute(
-            "UPDATE users SET password = ?, salt = ? WHERE username = ?",
-            (new_hash, new_salt, username),
-        )
-        conn.commit()
-        return True, "Password changed successfully!"
     finally:
         conn.close()
 
