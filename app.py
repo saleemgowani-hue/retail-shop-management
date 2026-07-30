@@ -20,7 +20,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS for UI
+# Custom CSS for Dashboard Navigation Tiles & Sidebar UI
 st.markdown("""
     <style>
     section[data-testid="stSidebar"] {
@@ -35,6 +35,26 @@ st.markdown("""
         padding: 15px;
         border-radius: 12px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+    }
+    .st-key-dash_nav_tiles div[data-testid="stHorizontalBlock"] {
+        gap: 14px;
+    }
+    .st-key-dash_nav_tiles div.stButton > button {
+        min-height: 92px;
+        width: 100%;
+        border-radius: 16px;
+        border: none;
+        color: white;
+        font-weight: 700;
+        font-size: 14px;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.18);
+        transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+        white-space: normal;
+    }
+    .st-key-dash_nav_tiles div.stButton > button:hover {
+        transform: translateY(-4px) scale(1.02);
+        box-shadow: 0 9px 18px rgba(0,0,0,0.26);
+        opacity: 0.95;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -324,7 +344,32 @@ def main_app():
         conn.close()
 
 def render_dashboard(conn):
+    role = st.session_state.role
     st.markdown("<h2 style='color: #2b2d42;'>📊 Executive Shop Dashboard</h2>", unsafe_allow_html=True)
+    st.markdown("Here is a quick overview of your retail store performance today.")
+
+    st.markdown("#### 🚀 Quick Navigation")
+    tile_pages = [p for p in MENU_ICONS.keys() if p != "Dashboard" and page_allowed(p, role)]
+    cols_per_row = 3
+    css_rules = []
+    with st.container(key="dash_nav_tiles"):
+        for r in range(0, len(tile_pages), cols_per_row):
+            row_pages = tile_pages[r:r + cols_per_row]
+            row_key = f"dash_nav_row_{r // cols_per_row}"
+            with st.container(key=row_key):
+                cols = st.columns(len(row_pages))
+                for idx, (col, page_name) in enumerate(zip(cols, row_pages), start=1):
+                    icon, color1, color2 = PAGE_STYLES.get(page_name, ("🔗", "#667eea", "#764ba2"))
+                    css_rules.append(
+                        f'.st-key-{row_key} div[data-testid="stHorizontalBlock"] > div:nth-child({idx}) '
+                        f'div.stButton button {{background: linear-gradient(135deg, {color1}, {color2});}}'
+                    )
+                    with col:
+                        if st.button(f"{icon}  {page_name}", key=f"navtile_{page_name}", use_container_width=True):
+                            st.session_state.current_page = page_name
+                            st.rerun()
+        st.markdown(f"<style>{''.join(css_rules)}</style>", unsafe_allow_html=True)
+
     p_count = pd.read_sql("SELECT COUNT(*) as cnt FROM products WHERE is_active = 1", conn).iloc[0]['cnt']
     c_count = pd.read_sql("SELECT COUNT(*) as cnt FROM customers WHERE is_active = 1", conn).iloc[0]['cnt']
     s_count = pd.read_sql("SELECT COUNT(*) as cnt FROM suppliers WHERE is_active = 1", conn).iloc[0]['cnt']
